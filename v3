@@ -1,0 +1,944 @@
+/*!
+  code by Trey;
+*/
+#define FILE_NAME "/config.txt"
+#define KEY_MAX_LENGTH    30 // change it if key is longer
+#define VALUE_MAX_LENGTH  30 // change it if value is longer
+#define fsr_pin 2 //GPIO12
+#include <DFRobot_DF1201S.h>
+//#include <SparkFunDS1307RTC.h>
+//#define SQW_INPUT_PIN 15   // Input pin to read SQW
+#include <HardwareSerial.h>
+#include <Wire.h> 
+#include "RTClib.h"
+#include "FS.h"
+#include <SD.h>
+#include <SPI.h>
+#include <analogWrite.h> 
+const uint8_t chipSelect = 8;
+const uint8_t cardDetect = 9;
+unsigned long start_time = 0;
+unsigned long time_now = 0;
+int delaytime = 1000;
+
+HardwareSerial myHardwareSerial(1); 
+RTC_DS3231 rtc;
+int redPin = 25;
+int greenPin = 26;
+int bluePin = 27;
+
+int redPin2 = 14;
+int greenPin2 = 12;
+int bluePin2 = 13;
+int set_state = 1;
+bool train_state = 0;
+int stdPressure;
+int doseconds;
+int times =15;
+bool state = 0;
+int FSR;
+int User;
+String dataMessage;
+String DT;
+String train_datetime;
+String asd;
+String datetime;
+// Timer variables
+unsigned long lastTime = 0;
+unsigned long timerDelay = 30000;
+
+//宣告任務Task1
+TaskHandle_t Task1;
+//宣告任務Task1
+TaskHandle_t Task2;
+//RTC_DS3231 rtc;
+DFRobot_DF1201S DF1201S;
+
+
+#include <BLEDevice.h> 
+#include <BLEServer.h> 
+#include <BLEUtils.h> 
+#include <BLE2902.h> 
+#include <String.h> 
+
+
+BLECharacteristic *pCharacteristic;
+BLECharacteristic *pCharacteristic2;
+BLECharacteristic *pCharacteristic3;
+BLECharacteristic *pCharacteristic4;
+bool deviceConnected = false;
+uint8_t txValue = 0;
+long lastMsg = 0;
+String rxload="Test\n";
+String rxloadx="Test\n";
+
+int i=0;
+/*為BLE供應商定義指定的 UUID 編號*/
+#define SERVICE_UUID           "6e400001-b5a3-f393-e0a9-e50e24dcca9e"   //6c89ed9a-8f67-11ed-a1eb-0242ac120002
+#define CHARACTERISTIC_UUID_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+#define CHARACTERISTIC_UUID_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+#define CHARACTERISTIC_UUID_TXX "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
+#define CHARACTERISTIC_UUID_TXXX "6e400005-b5a3-f393-e0a9-e50e24dcca9e"
+#define CHARACTERISTIC_UUID_RXX "6e400006-b5a3-f393-e0a9-e50e24dcca9e"
+/*為BLE服務器編寫一個Callback函式來管理BLE的連接。*/
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+    };
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+    }
+};
+
+/*具有BLE功能的Callback函式。 
+ *調用時，移動終端向 ESP32 發送數據時，會將其存儲到 reload 中。
+ */
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string rxValue = pCharacteristic->getValue();
+      if (rxValue.length() > 0) {
+        rxload="";
+        for (int i = 0; i < rxValue.length(); i++){
+          rxload +=(char)rxValue[i];
+        }
+      }
+    }
+};
+class MyCallbacks1: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic4) {
+      std::string rxValue = pCharacteristic4->getValue();
+      if (rxValue.length() > 0) {
+        rxloadx="";
+        for (int i = 0; i < rxValue.length(); i++){
+          rxloadx +=(char)rxValue[i];
+        }
+      }
+    }
+};
+/*創建BLE server流程：
+ *1. Create a BLE Server
+ *2. Create a BLE Service
+ *3. Create a BLE Characteristic on the Service
+ *4. Create a BLE Descriptor on the characteristic 
+ *5. Start the service
+ *6. Start advertising
+ */
+void setupBLE(String BLEName){
+  const char *ble_name=BLEName.c_str();
+  BLEDevice::init(ble_name);
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  BLEService *pService = pServer->createService(SERVICE_UUID); 
+  pCharacteristic= pService->createCharacteristic(CHARACTERISTIC_UUID_TX,BLECharacteristic::PROPERTY_NOTIFY);
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  pCharacteristic2= pService->createCharacteristic(CHARACTERISTIC_UUID_TXX,BLECharacteristic::PROPERTY_NOTIFY);
+  pCharacteristic2->addDescriptor(new BLE2902());
+
+  pCharacteristic3= pService->createCharacteristic(CHARACTERISTIC_UUID_TXXX,BLECharacteristic::PROPERTY_NOTIFY);
+  pCharacteristic3->addDescriptor(new BLE2902());
+
+  BLECharacteristic *  pCharacteristic4 = pService->createCharacteristic(CHARACTERISTIC_UUID_RXX,BLECharacteristic::PROPERTY_WRITE);
+  pCharacteristic4->setCallbacks(new MyCallbacks1()); 
+  
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_RX,BLECharacteristic::PROPERTY_WRITE);
+  pCharacteristic->setCallbacks(new MyCallbacks()); 
+
+  
+  pService->start();
+  pServer->getAdvertising()->start();
+  Serial.println("Waiting a client connection to notify...");
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+}
+
+/*------------------------------------FSR&RTC----------------------------------*/
+int getFSR(){
+  int fsr_value = analogRead(fsr_pin); // 讀取FSR
+  int fsr_value_2 = map(fsr_value,0,4095,0,20000);
+  return (fsr_value_2);
+}
+
+String getDT(int states){
+  char dt[16];
+  char dt1[16];
+  char tm[16];
+  char tm1[16];
+  DateTime now = rtc.now();
+  String Year = String(now.year());
+  String Month = String(now.month());
+  String Day = String(now.day());
+  String Hour = String(now.hour());
+  String Minute = String(now.minute());
+  String Second = String(now.second());
+  sprintf(dt, "%02d/%02d/%02d", now.year(),now.month(),now.day());
+  sprintf(tm, "%02d:%02d:%02d", now.hour(),now.minute(),now.second());
+  sprintf(dt1, "%02d-%02d-%02d", now.year(),now.month(),now.day());
+  sprintf(tm1, "%02d%02d%02d", now.hour(),now.minute(),now.second());
+  //String DT = (Year+'/'+Month+'/'+Day+' '+Hour+':'+Minute+':'+Second);
+  String DT = (String(dt)+' '+String(tm));
+  String DT1 = (String(dt1)+' '+String(tm1));
+  if(states==1){
+    return(DT1);  
+  }else return(DT);
+  
+}
+
+/*-------------------------------------mp3----------------------------------*/
+void playms(){
+  Serial.println("Start playing");
+  /*Start playing*/
+  DF1201S.start();
+  delay(3000);
+  Serial.println("Pause");
+  /*Pause*/
+  DF1201S.pause();
+  delay(3000);
+  Serial.println("Next");
+  /*Play the next song*/
+  DF1201S.next();
+  delay(3000);
+  Serial.println("Previous");
+  /*Play the previous song*/
+  DF1201S.last();
+  delay(3000);
+  Serial.println("Start playing");
+  //Fast forward 10S
+  DF1201S.fastForward(/*FF = */10);
+  //Fast Rewind 10S
+  //DF1201S.fastReverse(/*FR = */10);
+  //Start the song from the 10th second 
+  //DF1201S.setPlayTime(/*Play Time = */10);
+  
+  Serial.print("File number:");
+  //Get file number
+  Serial.println(DF1201S.getCurFileNumber());
+  
+  Serial.print("The number of files available to play:");
+  //The number of files available to play
+  Serial.println(DF1201S.getTotalFile());
+  
+  Serial.print("The time length the current song has played:");
+  //Get the time length the current song has played 
+  Serial.println(DF1201S.getCurTime());
+  
+  Serial.print("The total length of the currently-playing song: ");
+  //Get the total length of the currently-playing song 
+  Serial.println(DF1201S.getTotalTime());
+  Serial.print("The name of the currently-playing file: ");
+  //Get the name of the playing file 
+  Serial.println(DF1201S.getFileName());
+  delay(3000);
+  //Play the file No.1, the numbers are arranged according to the sequence of the files copied into the U-disk 
+  DF1201S.playFileNum(/*File Number = */1);
+  //Play the test.mp3 file in test folder 
+  //DF1201S.playSpecFile("/test/test.mp3");
+  
+  while(1);
+  /*Delete the currently-playing file */
+  //DF1201S.delCurFile();
+}
+
+
+
+
+
+
+void crt_FSR(String sec,String tms, String FSRX ){
+  Serial.println("CRT_FSR");
+  String FN ="/config.txt";
+  String cfg = String("stdPressure=")+FSRX+String("\r\nseconds="+sec)+String("\r\ntimes="+tms+"\r\n");
+  File file = SD.open("/config.txt");//要改檔名
+  if(!file) {
+    Serial.println("config File doesn't exist");
+    Serial.println("Creating config file...");
+    writeFile(SD, FN.c_str(), cfg.c_str());//要改檔名
+  }
+  else {
+    Serial.println("config File already exists");  
+    Serial.println("Creating config file...");
+    writeFile(SD, FN.c_str(), cfg.c_str());//要改檔名
+    Serial.println("XXXXXXXXXXXXXXXX");
+  }stdPressure  = SD_findInt(F("stdPressure"));
+    doseconds    = SD_findInt(F("seconds"));
+    times    = SD_findInt(F("times"));
+    Serial.print(F("SET_stdPressure = "));
+    Serial.println(stdPressure);
+    Serial.print(F("SET_seconds = "));
+    Serial.println(doseconds);
+    Serial.print(F("Times = "));
+    Serial.println(times);
+  file.close();
+}
+
+/*------sd card------------------------------------------------------------------------------*/
+void crt_title(String train_datetimes){
+
+  asd = String("/")+train_datetimes+String(".txt");
+  
+  File file = SD.open(asd.c_str());//要改檔名
+  if(!file) {
+    Serial.println("File doesn't exist");
+    Serial.println("Creating file..."+train_datetimes);
+    writeFile(SD, asd.c_str(), "User, Datetime, pressure \r\n");//要改檔名
+  }
+  else {
+    Serial.println("File already exists");  
+  }
+  file.close();
+}
+
+
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels){//列出目錄
+  Serial.printf("Listing directory: %s\n", dirname);
+
+  File root = fs.open(dirname);
+  if(!root){
+    Serial.println("Failed to open directory");
+    return;
+  }
+  if(!root.isDirectory()){
+    Serial.println("Not a directory");
+    return;
+  }
+
+  File file = root.openNextFile();
+  while(file){
+    if(file.isDirectory()){
+      Serial.print("  DIR : ");
+      Serial.println(file.name());
+      if(levels){
+        listDir(fs, file.name(), levels -1);
+      }
+    } else {
+      Serial.print("  FILE: ");
+      Serial.print(file.name());
+      Serial.print("  SIZE: ");
+      Serial.println(file.size());
+    }
+    file = root.openNextFile();
+  }
+}
+
+void createDir(fs::FS &fs, const char * path){//新增目錄
+  Serial.printf("Creating Dir: %s\n", path);
+  if(fs.mkdir(path)){
+    Serial.println("Dir created");
+  } else {
+    Serial.println("mkdir failed");
+  }
+}
+
+void removeDir(fs::FS &fs, const char * path){//移除目錄
+  Serial.printf("Removing Dir: %s\n", path);
+  if(fs.rmdir(path)){
+    Serial.println("Dir removed");
+  } else {
+    Serial.println("rmdir failed");
+  }
+}
+
+void readFile(fs::FS &fs, const char * path){//讀
+  Serial.printf("Reading file: %s\n", path);
+
+  File file = fs.open(path);
+  if(!file){
+    Serial.println("Failed to open file for reading");
+    return;
+  }
+
+  Serial.print("Read from file: ");
+  while(file.available()){
+    Serial.write(file.read());
+  }
+  file.close();
+}
+
+void writeFile(fs::FS &fs,  const char * path, const char * message){//寫
+  Serial.printf("Writing file: %s\n", path);
+
+  File file = fs.open(path, FILE_WRITE);
+  if(!file){
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  if(file.print(message)){
+    Serial.println("File written");
+  } else {
+    Serial.println("Write failed");
+  }
+  file.close();
+}
+
+void appendFile(fs::FS &fs, const char * path, const char * message){//加入
+  Serial.printf("Appending to file: %s\n", path);
+
+  File file = fs.open(path, FILE_APPEND);
+  if(!file){
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  if(file.print(message)){
+    Serial.println("Message appended");
+  } else {
+    Serial.println("Append failed");
+  }
+  file.close();
+}
+
+void renameFile(fs::FS &fs, const char * path1, const char * path2){//重新命名檔案
+  Serial.printf("Renaming file %s to %s\n", path1, path2);
+  if (fs.rename(path1, path2)) {
+    Serial.println("File renamed");
+  } else {
+    Serial.println("Rename failed");
+  }
+}
+
+void deleteFile(fs::FS &fs, const char * path){//刪除檔案
+  Serial.printf("Deleting file: %s\n", path);
+  if(fs.remove(path)){
+    Serial.println("File deleted");
+  } else {
+    Serial.println("Delete failed");
+  }
+}
+
+/*-----------------------------------config------------------------------------*/
+
+bool SD_available(const __FlashStringHelper * key) {
+  char value_string[VALUE_MAX_LENGTH];
+  int value_length = SD_findKey(key, value_string);
+  return value_length > 0;
+}
+
+int SD_findInt(const __FlashStringHelper * key) {
+  char value_string[VALUE_MAX_LENGTH];
+  int value_length = SD_findKey(key, value_string);
+  return HELPER_ascii2Int(value_string, value_length);
+}
+
+float SD_findFloat(const __FlashStringHelper * key) {
+  char value_string[VALUE_MAX_LENGTH];
+  int value_length = SD_findKey(key, value_string);
+  return HELPER_ascii2Float(value_string, value_length);
+}
+
+String SD_findString(const __FlashStringHelper * key) {
+  char value_string[VALUE_MAX_LENGTH];
+  int value_length = SD_findKey(key, value_string);
+  return HELPER_ascii2String(value_string, value_length);
+}
+
+int SD_findKey(const __FlashStringHelper * key, char * value) {
+  File configFile = SD.open(FILE_NAME);
+
+  if (!configFile) {//若要修正找不到config的數值要補植可寫在這裡
+    Serial.print(F("SD Card: error on opening file "));
+    Serial.println(FILE_NAME);
+    return 0;
+  }
+
+  char key_string[KEY_MAX_LENGTH];
+  char SD_buffer[KEY_MAX_LENGTH + VALUE_MAX_LENGTH + 1]; // 1 is = character
+  int key_length = 0;
+  int value_length = 0;
+
+  // Flash string to string
+  PGM_P keyPoiter;
+  keyPoiter = reinterpret_cast<PGM_P>(key);
+  byte ch;
+  do {
+    ch = pgm_read_byte(keyPoiter++);
+    if (ch != 0)
+      key_string[key_length++] = ch;
+  } while (ch != 0);
+
+  // check line by line
+  while (configFile.available()) {
+    int buffer_length = configFile.readBytesUntil('\n', SD_buffer, 100);
+    if (SD_buffer[buffer_length - 1] == '\r')
+      buffer_length--; // trim the \r
+
+    if (buffer_length > (key_length + 1)) { // 1 is = character
+      if (memcmp(SD_buffer, key_string, key_length) == 0) { // equal
+        if (SD_buffer[key_length] == '=') {
+          value_length = buffer_length - key_length - 1;
+          memcpy(value, SD_buffer + key_length + 1, value_length);
+          break;
+        }
+      }
+    }
+  }
+
+  configFile.close();  // close the file
+  return value_length;
+}
+
+int HELPER_ascii2Int(char *ascii, int length) {
+  int sign = 1;
+  int number = 0;
+
+  for (int i = 0; i < length; i++) {
+    char c = *(ascii + i);
+    if (i == 0 && c == '-')
+      sign = -1;
+    else {
+      if (c >= '0' && c <= '9')
+        number = number * 10 + (c - '0');
+    }
+  }
+
+  return number * sign;
+}
+
+float HELPER_ascii2Float(char *ascii, int length) {
+  int sign = 1;
+  int decimalPlace = 0;
+  float number  = 0;
+  float decimal = 0;
+
+  for (int i = 0; i < length; i++) {
+    char c = *(ascii + i);
+    if (i == 0 && c == '-')
+      sign = -1;
+    else {
+      if (c == '.')
+        decimalPlace = 1;
+      else if (c >= '0' && c <= '9') {
+        if (!decimalPlace)
+          number = number * 10 + (c - '0');
+        else {
+          decimal += ((float)(c - '0') / pow(10.0, decimalPlace));
+          decimalPlace++;
+        }
+      }
+    }
+  }
+
+  return (number + decimal) * sign;
+}
+
+String HELPER_ascii2String(char *ascii, int length) {
+  String str;
+  str.reserve(length);
+  str = "";
+
+  for (int i = 0; i < length; i++) {
+    char c = *(ascii + i);
+    str += String(c);
+  }
+
+  return str;
+}
+
+/*-----------------------------------RGB--------------------------------------*/
+void color (unsigned char red, unsigned char green, unsigned char blue,int num)
+{    
+  if(num==0){
+        analogWrite(redPin, red);   
+        analogWrite(greenPin,green); 
+        analogWrite(bluePin, blue); 
+  }
+  else{
+        analogWrite(redPin2, red);   
+        analogWrite(greenPin2,green); 
+        analogWrite(bluePin2, blue); 
+  }
+} 
+void BleSend(String newValue){
+  const char *Send = newValue.c_str();
+  pCharacteristic->setValue(Send);
+  pCharacteristic->notify();
+}
+void BleSend2(String newValue){
+  const char *Send = newValue.c_str();
+  pCharacteristic2->setValue(Send);
+  pCharacteristic2->notify();
+}
+void BleSend3(String newValue){
+  const char *Send = newValue.c_str();
+  pCharacteristic3->setValue(Send);
+  pCharacteristic3->notify();
+}
+
+/*-----------------------------------FUNCTION--------------------------------*/
+//1.進入線下模式=>2.開始感測壓力(不紀錄)task1=>3.超過壓力值task2=>4.開始收縮並記錄與播放倒數5秒=>5.開始放鬆並記錄與播放倒數5秒=>結束回到3.
+
+void Task1code( void * pvParameters ){
+  Serial.print("Task1 running on core ");
+  Serial.println(xPortGetCoreID());
+  int set=1;
+  for(;;){
+    
+    User=20;
+    FSR = getFSR();
+    datetime = getDT(2);
+    Serial.println("FSR:"+String(FSR));
+    Serial.println("rxload:"+rxload);
+    String msg = String(User)+", "+String(datetime)+", "+String(FSR)+"\n";
+    if(rxload=="SetUp"){
+      if(set==1){
+        DF1201S.playSpecFile("/setup.mp3");
+        delay(2000);
+      }set=0;
+      color(100,100,0,1); 
+      color(100,100,0,0); 
+      set_state=0;
+      Serial.println("SetUP");
+      Serial.println("Set_state_1: "+set_state);
+      String msgg = String(datetime)+", "+String(FSR)+"\n";
+      BleSend(msgg);
+      
+  }else if(rxload=="A"){
+    Serial.println("rxloadx: "+rxloadx);
+    Serial.println("Set_state_2: "+set_state);
+    Serial.println("A");
+    String myString = rxloadx;
+    int commaIndex = myString.indexOf(",");
+    String tms = myString.substring(0, commaIndex);
+    Serial.println(tms);//第一字
+    myString = myString.substring(commaIndex+1);
+    commaIndex = myString.indexOf(",");
+    String sec = myString.substring(0, commaIndex);
+    Serial.println(sec);//第二字
+    String pres = myString.substring(commaIndex+1);
+    Serial.println(pres);
+    crt_FSR(sec,tms,pres);
+    
+    rxload="S";
+  }delay(500);set_state=1;Serial.println("Set_state_3: "+String(set_state));
+    if(state==1){
+      appendFile(SD, asd.c_str(), msg.c_str());
+      BleSend3(msg);
+    }
+  } 
+    Serial.println("ABC");
+}
+
+void Task2code( void * pvParameters ){
+  Serial.print("Task2 running on core ");
+  Serial.println(xPortGetCoreID());
+//  int times = doseconds;
+  delay(1000);
+  int off=1;
+  int online=1;
+  for(;;){
+    time_now = millis()-start_time;
+    Serial.println("************偵測中************");
+    //Serial.println(time_now);
+    
+//    int times = doseconds;
+    int ttms = 1;
+ 
+    if(!deviceConnected && time_now >= 10000 && set_state == 1){
+      /*新增未連線播聲音*/
+//      if(off==1){
+//        DF1201S.playSpecFile("/offline.mp3");
+//        delay(2000);
+//      }off=0;
+      color(0,255,0,1); 
+      
+      DF1201S.playSpecFile("/start.mp3");
+      delay(5000);
+//      if(FSR>stdPressure){
+        Serial.println("************線下************");
+        int filename = 1;
+        train_datetime = getDT(filename);
+        crt_title(train_datetime);
+        state=1;
+        delay(1000);
+        for(times;times>=1;){
+          color(255,0,0,1); 
+          train_state = 1;
+          Serial.println("TTMS:"+String(ttms));    
+          Serial.println("第"+String(times)+"次訓練");    
+          Serial.println("deviceConnected"+String(deviceConnected));
+          delay(1000);
+          DF1201S.playSpecFile("/set"+String(ttms)+".mp3");
+          delay(4000);
+          
+          int i = doseconds, j=doseconds;
+          
+          if(FSR>stdPressure){
+            //倒數秒數
+            color(255,0,0,1);
+            delay(100);
+            DF1201S.start();
+            DF1201S.playSpecFile("/re.mp3");
+            delay(1200);
+            for(i;i>=1;i--){
+              //播放聲音檔5~1
+              color(0,0,0,1); 
+              delay(500);
+              DF1201S.playSpecFile("/"+String(i)+".mp3");
+              Serial.println("收縮"+String(i)+"秒");
+              color(255,0,0,1);
+              delay(500);
+            }
+            
+            Serial.println("***********開始放鬆************");
+            color(0,0,255,1);
+            DF1201S.start();
+            delay(1000);DF1201S.playSpecFile("/relax.mp3");delay(3000);
+//            while(FSR>stdPressure){
+//              color(0,0,255,1);
+//              Serial.println("FSR: "+FSR);
+//              DF1201S.start();
+//              DF1201S.playSpecFile("/relax.mp3");delay(3000);
+//            }
+            if(FSR>=0){ 
+              DF1201S.playSpecFile("/re.mp3");
+              delay(1200);
+              for(j;j>=1;j--){
+              //播放聲音檔5~1
+                color(0,0,0,1); 
+                delay(500);
+                DF1201S.start();
+                DF1201S.playSpecFile("/"+String(j)+".mp3");
+                Serial.println("放鬆"+String(j)+"秒");
+                color(0,0,255,1);
+                delay(500);
+            }train_state = 0;times--;Serial.println("訓練狀態:"+String(train_state));
+          } 
+        }delay(3000);
+          Serial.println("訓練狀態:"+String(train_state));
+        if(train_state == 1){
+          Serial.println("訓練狀態------------"+String(train_state));
+          ttms = ttms; 
+          times = times;
+        }else{
+            ttms=ttms+1;
+          }//第二次訓練沒有施加壓力會跳到這TTMS=1又會回到第一次訓練
+      
+        } delay(1000);
+        DF1201S.start();
+        DF1201S.playSpecFile("/finish.mp3");
+        color(0,255, 0,1); 
+        delay(1000);
+        state=0;//檢測到FSR小於PRESSURE不做事 
+//     }
+//     delay(500);
+    }delay(2000);
+
+    
+    if(rxload=="IOS"){
+      /*新增連線後播聲音*/
+//      if(online==1){
+//        DF1201S.playSpecFile("/online.mp3");
+//        delay(2000);
+//      }online=0;
+      color(0,255,0,1); 
+      delay(2000);
+      DF1201S.playSpecFile("/start.mp3");
+      delay(2000);
+      int filename = 1;
+      train_datetime = getDT(filename);
+      crt_title(train_datetime);
+      Serial.println("CREEEEEEEE");
+
+      state=1;
+      for(times;times>=1 && rxload == "IOS" ;){// 加入stdpress>500;
+        color(255,0,0,1); 
+        train_state = 1;
+        Serial.println("TTMS:"+String(ttms));    
+        Serial.println("第"+String(times)+"次訓練");    
+        BleSend("第"+String(ttms)+"次訓練請開始收縮");
+        delay(3000);
+        DF1201S.playSpecFile("/set"+String(ttms)+".mp3");
+        delay(3000);
+
+        int i = doseconds, j=doseconds;
+        
+        if(rxload=="IOS" && FSR>stdPressure){
+          //倒數秒數
+          color(255,0,0,1);
+          BleSend("倒數");                      
+          delay(100);
+//          DF1201S.start();
+          DF1201S.playSpecFile("/re.mp3");
+           delay(1200);
+          for(i;i>=1 && rxload == "IOS";i--){
+            //播放聲音檔5~1
+            color(0,0,0,1); 
+            BleSend2(String(i));                   
+            delay(500);
+            
+            DF1201S.playSpecFile("/"+String(i)+".mp3");
+            Serial.println("收縮"+String(i)+"秒");
+            color(255,0,0,1);
+            delay(500);
+          }
+          
+          Serial.println("***********開始放鬆************");
+          color(0,0,255,1);
+//          DF1201S.start();
+          
+          BleSend("請放鬆");
+          delay(2000);
+          DF1201S.playSpecFile("/relax.mp3");
+          delay(2000);
+//          while(rxload=="IOS" && FSR>=0){
+//            color(0,0,255,1);
+////            DF1201S.start();
+//            BleSend("請放鬆");
+//            delay(2000);
+//            DF1201S.playSpecFile("/relax.mp3");delay(2000);
+//          }
+          if(rxload=="IOS" && FSR>=0){
+            for(j;j>=1 && rxload == "IOS";j--){
+            //播放聲音檔5~1
+              color(0,0,0,1); 
+              
+//              DF1201S.start();
+              BleSend2(String(j));
+              delay(500);
+              DF1201S.playSpecFile("/"+String(j)+".mp3");
+              Serial.println("放鬆"+String(j)+"秒");
+              color(0,0,255,1);
+              delay(500);
+          }train_state = 0;times--;Serial.println("訓練狀態:"+String(train_state));
+        } 
+      }delay(2000);Serial.println("訓練狀態:"+String(train_state));if(train_state == 1){Serial.println("訓練狀態------------"+String(train_state));ttms = ttms; times = times;}else{ttms=ttms+1;}//第二次訓練沒有施加壓力會跳到這TTMS=1又會回到第一次訓練
+    
+      } start_time=millis();
+//      DF1201S.start();
+        BleSend("訓練完成");
+        BleSend2(" ");
+        delay(1000);
+        rxload = "STOP";
+        DF1201S.playSpecFile("/finish.mp3");color(0,255, 0,1); delay(1000);state=0;//檢測到FSR小於PRESSURE不做事 
+   }delay(1000);
+}
+}
+
+
+
+
+
+
+
+
+void setup(void){
+  start_time = millis();
+  pinMode(cardDetect, INPUT);
+  pinMode(redPin, OUTPUT);   
+  pinMode(greenPin, OUTPUT); 
+  pinMode(bluePin, OUTPUT);  
+
+  pinMode(redPin2, OUTPUT);   
+  pinMode(greenPin2, OUTPUT); 
+  pinMode(bluePin2, OUTPUT);  
+  color(255, 0, 0,0); // 红色亮
+  Serial.begin(115200);
+  myHardwareSerial.begin(115200, SERIAL_8N1, 4, 16); // Serial的TX,RX
+  setupBLE("ESP32_BLE"); //初始化BLE並為其命名，藍牙顯示名稱可自行更改
+  Serial.println("Hello");
+
+//  if (! rtc.begin()) {
+//    Serial.println("Couldn't find RTC");
+//    while (1);
+//  }
+  
+  rtc.begin();
+    
+  Serial.println("RTC sussces");
+  //rtc.autoTime();
+
+
+
+
+  
+//  if (!SD.begin()) {
+//      Serial.println("Card Mount Failed");
+//      while (1);
+//    }
+  while(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
+    delay(1000);
+  }Serial.println("Card Mount sussces");
+
+
+
+    
+    /*---------------config-----------------*/
+  stdPressure  = SD_findInt(F("stdPressure"));
+  doseconds    = SD_findInt(F("seconds"));
+  times    = SD_findInt(F("times"));
+  Serial.print(F("stdPressure = "));
+  Serial.println(stdPressure);
+
+  Serial.print(F("seconds = "));
+  Serial.println(doseconds);
+
+  Serial.print(F("Times = "));
+  Serial.println(times);
+  
+  
+  while(!DF1201S.begin(myHardwareSerial)){
+    Serial.println("Init failed, please check the wire connection!");
+    delay(1000);
+  }Serial.println("MP3 Init sussces");
+  
+//  /*Set volume to 20*/
+  DF1201S.setVol(/*VOL = */20);
+  Serial.print("VOL:");
+//  /*Get volume*/
+  Serial.println(DF1201S.getVol());
+//  /*Enter music mode*/
+  DF1201S.switchFunction(DF1201S.MUSIC);
+//  /*Wait for the end of the prompt tone */
+//  delay(2000);
+//  /*Set playback mode to "repeat all"*/
+  DF1201S.setPlayMode(DF1201S.SINGLECYCLE);
+//  Serial.print("PlayMode:");
+//  /*Get playback mode*/
+//  Serial.println(DF1201S.getPlayMode());
+  //delay(2000);
+  //DF1201S.playFileNum(1);
+  //DF1201S.playSpecFile("/start.mp3");
+  //Set baud rate to 115200(Need to power off and restart, power-down save)
+  //DF1201S.setBaudRate(115200);
+  //Turn on indicator LED (Power-down save)
+  //DF1201S.setLED(true);
+  //Turn on the prompt tone (Power-down save) 
+  DF1201S.setPrompt(false);
+  //Enable amplifier chip 
+  DF1201S.enableAMP();
+  //Disable amplifier chip 
+  //DF1201S.disableAMP();
+//  delay(2000);
+//  DF1201S.pause();
+  
+  //在核心0啟動任務1
+  xTaskCreatePinnedToCore(
+    Task1code, /*任務實際對應的Function*/
+    "Task1",        /*任務名稱*/
+    10000,          /*堆疊空間*/
+    NULL,           /*無輸入值*/
+    0,                 /*優先序0*/
+    &Task1,       /*對應的任務變數位址*/
+    0);                /*指定在核心0執行 */
+
+  delay(500); 
+  xTaskCreatePinnedToCore(Task2code, "Task2", 10000, NULL, 1, &Task2,  1); 
+  delay(500);   
+  
+  color(0,255, 0,0); //綠色亮
+  delay(1000);   
+}
+
+void loop(){
+  
+
+  
+  
+}
+
+
+
+/*-----------------------------MAIN_CODE----------------------------------------*/
